@@ -1,4 +1,25 @@
-package main
+// The MIT License (MIT)
+//
+// Copyright (c) 2016 Jamie Alquiza
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+package icetank
 
 import (
         "fmt"
@@ -38,34 +59,78 @@ func (p *Pool) Start(n int) error {
         if !p.Available {
                 return fmt.Errorf("[%s - %s] Pool unavailable", p.Vpc, p.FilterString)
         } else {
-                log.Printf("[%s - %s] Requested start for %d instances\n", p.Vpc, p.FilterString)
+                log.Printf("[%s - %s] Requested start for %d instances\n", p.Vpc, p.FilterString, n)
         }
 
-        var toRun InstanceList
+        var instances InstanceList
 
         if len(p.Stopped) == 0 {
                 return fmt.Errorf("[%s - %s] No stopped instances available", p.Vpc, p.FilterString)
         }
 
         if n > len(p.Stopped) {
-                toRun = p.List("stopped")
+                instances = p.List("stopped")
                 log.Printf("[%s - %s] Requested start for %d instances, only %d available\n",
                         p.Vpc, p.FilterString, n, len(p.List("stopped")))
         } else {
-                toRun = p.List("stopped")[:n]
+                instances = p.List("stopped")[:n]
         }
 
-        log.Printf("[%s - %s] Requesting start for %s\n", p.Vpc, p.FilterString, toRun.String())
+        log.Printf("[%s - %s] Requesting start for %s\n", p.Vpc, p.FilterString, instances.String())
 
         _, err := p.Client.StartInstances(&ec2.StartInstancesInput{
-                InstanceIds: toRun,
+                InstanceIds: instances,
         })
         if err != nil {
                 return err
         }
 
         err = p.Client.WaitUntilInstanceRunning(&ec2.DescribeInstancesInput{
-                InstanceIds: toRun,
+                InstanceIds: instances,
+        })
+        if err != nil {
+                return err
+        }
+
+        p.Update()
+
+        return nil
+}
+
+// Stop attempts to stop n instances
+// in the pools running list.
+func (p *Pool) Stop(n int) error {
+        if !p.Available {
+                return fmt.Errorf("[%s - %s] Pool unavailable", p.Vpc, p.FilterString)
+        } else {
+                log.Printf("[%s - %s] Requested stop for %d instances\n", p.Vpc, p.FilterString, n)
+        }
+
+        var instances InstanceList
+
+        if len(p.Running) == 0 {
+                return fmt.Errorf("[%s - %s] No running instances available", p.Vpc, p.FilterString)
+        }
+
+        if n > len(p.Running) {
+                instances = p.List("running")
+                log.Printf("[%s - %s] Requested stop for %d instances, only %d available\n",
+                        p.Vpc, p.FilterString, n, len(p.List("running")))
+        } else {
+                instances = p.List("running")[:n]
+        }
+
+        log.Printf("[%s - %s] Requesting stop for %s\n", p.Vpc, p.FilterString, instances.String())
+
+        _, err := p.Client.StopInstances(&ec2.StopInstancesInput{
+                InstanceIds: instances,
+        })
+        if err != nil {
+                return err
+        }
+
+        err = p.Client.WaitUntilInstanceStopped(&ec2.DescribeInstancesInput{
+                InstanceIds: instances,
         })
         if err != nil {
                 return err
@@ -170,8 +235,8 @@ func (p *Pool) List(state string) []*string {
 // NewPool constructs a list of running and stopped
 // machines of a particular class (filtered by tag.Name)
 // belonging to the specified VPC.
-func NewPool(vpc, filter string) *Pool {
-        svc := ec2.New(session.New(&aws.Config{Region: aws.String("us-west-2")}))
+func NewPool(vpc, filter, region string) *Pool {
+        svc := ec2.New(session.New(&aws.Config{Region: aws.String(region)}))
         pool := &Pool{
                 Available:    false,
                 Client:       svc,
@@ -184,14 +249,4 @@ func NewPool(vpc, filter string) *Pool {
         pool.Update()
 
         return pool
-}
-
-func main() {
-        pool := NewPool("vpc-xxx", "web")
-
-        err := pool.Start(2)
-        if err != nil {
-                log.Println(err)
-        }
-
 }
